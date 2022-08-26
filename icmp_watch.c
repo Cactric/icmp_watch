@@ -53,6 +53,8 @@ struct destination_info {
 	int sum_time;			// Sum of all of the response times taken so far
 	int time_count;			// How many samples were taken, used to calculate an average (errors/no replies don’t increment this)
 	
+	int total_count;		// Count of everything, including errors and timeouts
+	
 	int error;				// errno if there was an error, 0 otherwise
 	struct sockaddr *address;			// pointer to either an sockadder_in or sockaddr_in6 struct
 };
@@ -96,6 +98,7 @@ static int ping_all(int cnt, struct destination_info* destinations, struct timev
 	for (int i = 0; i < cnt; ++i) {
 		destinations[i].response_time = -1;	  	// what we return if we did not get a reply.
 		destinations[i].error = 0;			  	// what we return if there wasn’t an error
+		destinations[i].total_count++;			// Increment the total count (so we can get a reply %)
 	}
 	
 	// Prepare an ICMP(v4 and v6) request for each destination.
@@ -212,9 +215,22 @@ static int ping_all(int cnt, struct destination_info* destinations, struct timev
 						break;
 					}
 				assert(idx >= 0);
+				
 				const int timeleft = (int) (timeout->tv_sec * 1000000 + timeout->tv_usec);
-				destinations[idx].response_time = waittime - timeleft;
+				
+				// Fill in the time, etc.
+				int this_time = waittime - timeleft;
+				destinations[idx].response_time = this_time;
 				num_replies += 1;
+				
+				if (destinations[idx].min_time > this_time) {
+					destinations[idx].min_time = this_time;
+				} else if (destinations[idx].max_time < this_time) {
+					destinations[idx].max_time = this_time;
+				}
+				
+				destinations[idx].sum_time += this_time;
+				destinations[idx].time_count++;
 			}
 		}
 		if (FD_ISSET(sock6, &read_set)) {
@@ -504,6 +520,20 @@ int main(int argc, char* argv[])
 		struct timeval timeout = default_timeout;
 		ping_all(cnt, destinations, &timeout);
 		fprintf(stdout, CLEARSCREEN);
+
+		
+		// Header line
+		fprintf(stdout, UNDERLINE "%-*s", spaceForHostname, "Host");
+		fprintf(stdout, "%-*s", 8, "Time");
+		
+		if(statistics) {
+			fprintf(stdout, "%-*s", 8, "Maximum");
+			fprintf(stdout, "%-*s", 8, "Minimum");
+			fprintf(stdout, "%-*s", 8, "Average");
+			fprintf(stdout, "%-*s", 8, "Reply %");
+			fprintf(stdout, "\n");
+		}
+
 		for (int i = 0; i < cnt; ++i)
 		{
 			const int t = destinations[i].response_time;
@@ -511,19 +541,10 @@ int main(int argc, char* argv[])
 			
 			const int max = destinations[i].max_time;
 			const int min = destinations[i].min_time;
-			const double avg = ((double) destinations[i].sum_time / 1000) / destinations[i].time_count;
+			const int avg = ((double) destinations[i].sum_time / 1000) / destinations[i].time_count;
+			const int reply_percent = ((double) destinations[i].time_count / destinations[i].total_count) * 100;
 			
-			// Header line
-			fprintf(stdout, UNDERLINE "%-*s", spaceForHostname, "Host");
-			fprintf(stdout, "%-*s", 8, "Time");
-			
-			if(statistics) {
-				fprintf(stdout, "%-*s", 8, "Maximum");
-				fprintf(stdout, "%-*s", 8, "Minimum");
-				fprintf(stdout, "%-*s", 8, "Average");
-			}
-			
-			fprintf(stdout, RESETALL "\n");
+			fprintf(stdout, RESETALL);
 			
 			fprintf(stdout, "%-*s", spaceForHostname, argv[optind + i]);
 			if (t < 0)
@@ -536,7 +557,8 @@ int main(int argc, char* argv[])
 				if (statistics) {
 					fprintf(stdout, FGWHT BGGRN "%5d ms", max / 1000);
 					fprintf(stdout, FGWHT BGGRN "%5d ms", min / 1000);
-					fprintf(stdout, FGWHT BGGRN "%5.3g ms", avg);
+					fprintf(stdout, FGWHT BGGRN "%5d ms", avg);
+					fprintf(stdout, FGWHT BGGRN "%5d %% ", reply_percent);
 				}
 				fprintf(stdout, RESETALL "\n");
 			}
