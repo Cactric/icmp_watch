@@ -18,6 +18,7 @@
 #include <netinet/icmp6.h>
 #include <arpa/inet.h>
 #include <sys/select.h>
+#include <limits.h>
 #include <getopt.h>		// for getopt_long()
 
 // NOTE:
@@ -40,8 +41,18 @@
 
 #define BGGRN	    ESC "[1;42m"
 
+#define INVERT		ESC "[1;7m"
+
+#define UNDERLINE	ESC "[1;4m"
+
 struct destination_info {
 	int response_time;		// Response time in milliseconds
+	int max_time;			// Maximum response time, shown if -s is specified
+	int min_time;			// Minimum response time
+	
+	int sum_time;			// Sum of all of the response times taken so far
+	int time_count;			// How many samples were taken, used to calculate an average (errors/no replies don’t increment this)
+	
 	int error;				// errno if there was an error, 0 otherwise
 	struct sockaddr *address;			// pointer to either an sockadder_in or sockaddr_in6 struct
 };
@@ -245,8 +256,20 @@ static int ping_all(int cnt, struct destination_info* destinations, struct timev
 				}
 				assert(idx >= 0);
 				const int timeleft = (int) (timeout->tv_sec * 1000000 + timeout->tv_usec);
-				destinations[idx].response_time = waittime - timeleft;
+				
+				// Fill in the time, etc.
+				int this_time = waittime - timeleft;
+				destinations[idx].response_time = this_time;
 				num_replies += 1;
+				
+				if (destinations[idx].min_time > this_time) {
+					destinations[idx].min_time = this_time;
+				} else if (destinations[idx].max_time < this_time) {
+					destinations[idx].max_time = this_time;
+				}
+				
+				destinations[idx].sum_time += this_time;
+				destinations[idx].time_count++;
 			}
 		}
 	}
@@ -357,6 +380,8 @@ int main(int argc, char* argv[])
 	
 	// Restrict protocol: if 0, both IPv4 and IPv6 are enabled, if 4, only v4 and if 6, only v6
 	int restrict_protocol = 0;
+	// If we should show statistics
+	int statistics = 0;
 	
 	// Parse command line options (we'll break out of the loop)
 	while(1) {
@@ -364,11 +389,12 @@ int main(int argc, char* argv[])
 		int c;
 		static struct option long_options[] = {
 			{"interval", required_argument, 0, 'i'},
+			{"statistics", no_argument, 0, 's'},
 			{"help", no_argument, 0, 'h'},
 			{0, 0, 0, 0} 	// default option (for unknown options)
 		};
 		
-		c = getopt_long(argc, argv, "46i:h", long_options, &option_index);
+		c = getopt_long(argc, argv, "46i:hs", long_options, &option_index);
 		
 		if (c == -1) {
 			break; // no more options
@@ -418,6 +444,8 @@ int main(int argc, char* argv[])
 			case 'h':
 				print_help(argv[0]);
 				exit(0);
+			case 's':	// statistics
+				statistics = 1;
 			default:
 				//fprintf(stderr, "getopt_long returned character code 0x%x\n", c);
 		}
@@ -432,7 +460,14 @@ int main(int argc, char* argv[])
 
 	const int cnt = argc - optind;    // Every argument left after taking away the options is a hostname.
 	struct destination_info destinations[cnt];
-
+	
+	// Initialise the destinations
+	memset(destinations, 0, sizeof(struct destination_info) * cnt);
+	for(int i=0; i < cnt; i++) {
+		// Set all the min times to INT_MAX so that they'll always be replaced by the actual first value
+		destinations[i].min_time = INT_MAX;
+	}
+	
 	fprintf(stderr, "Looking up %d ip numbers...", cnt);
 	fflush(stderr);
 	const int num = get_ip_addresses(cnt, argv, optind, destinations, restrict_protocol);
@@ -473,14 +508,38 @@ int main(int argc, char* argv[])
 		{
 			const int t = destinations[i].response_time;
 			const int e = destinations[i].error;
+			
+			const int max = destinations[i].max_time;
+			const int min = destinations[i].min_time;
+			const double avg = ((double) destinations[i].sum_time / 1000) / destinations[i].time_count;
+			
+			// Header line
+			fprintf(stdout, UNDERLINE "%-*s", spaceForHostname, "Host");
+			fprintf(stdout, "%-*s", 8, "Time");
+			
+			if(statistics) {
+				fprintf(stdout, "%-*s", 8, "Maximum");
+				fprintf(stdout, "%-*s", 8, "Minimum");
+				fprintf(stdout, "%-*s", 8, "Average");
+			}
+			
+			fprintf(stdout, RESETALL "\n");
+			
 			fprintf(stdout, "%-*s", spaceForHostname, argv[optind + i]);
 			if (t < 0)
 				if (e != 0)
 					fprintf(stdout, FGWHT BGRED "   ERROR" RESETALL " (%s)\n", strerror(e));
 				else
 					fprintf(stdout, FGWHT BGRED "NO REPLY" RESETALL "\n");
-			else
-				fprintf(stdout, FGWHT BGGRN "%5d ms" RESETALL "\n", t / 1000);
+			else {
+				fprintf(stdout, FGWHT BGGRN "%5d ms", t / 1000);
+				if (statistics) {
+					fprintf(stdout, FGWHT BGGRN "%5d ms", max / 1000);
+					fprintf(stdout, FGWHT BGGRN "%5d ms", min / 1000);
+					fprintf(stdout, FGWHT BGGRN "%5.3g ms", avg);
+				}
+				fprintf(stdout, RESETALL "\n");
+			}
 		}
 		// Pace ourselves.
 		const int NS_PER_US = 1000;
