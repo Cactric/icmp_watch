@@ -531,8 +531,8 @@ int main(int argc, char* argv[])
 			fprintf(stdout, "%-*s", 8, "Minimum");
 			fprintf(stdout, "%-*s", 8, "Average");
 			fprintf(stdout, "%-*s", 8, "Reply %");
-			fprintf(stdout, "\n");
 		}
+		fprintf(stdout, "\n");
 
 		for (int i = 0; i < cnt; ++i)
 		{
