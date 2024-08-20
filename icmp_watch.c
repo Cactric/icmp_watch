@@ -547,18 +547,28 @@ int main(int argc, char* argv[])
 			fprintf(stdout, RESETALL);
 			
 			fprintf(stdout, "%-*s", spaceForHostname, argv[optind + i]);
-			if (t < 0)
-				if (e != 0)
-					fprintf(stdout, FGWHT BGRED "   ERROR" RESETALL " (%s)\n", strerror(e));
-				else
-					fprintf(stdout, FGWHT BGRED "NO REPLY" RESETALL "\n");
-			else {
-				fprintf(stdout, FGWHT BGGRN "%5d ms", t / 1000);
+			if (e != 0) {
+				fprintf(stdout, FGWHT BGRED "   ERROR" RESETALL " (%s)\n", strerror(e));
+			} else {
+				if (t < 0) {
+					fprintf(stdout, FGWHT BGRED "NO REPLY");
+				} else {
+					fprintf(stdout, FGWHT BGGRN "%5d ms", t / 1000);
+				}
+				// Print statistics and go to the next line
 				if (statistics) {
-					fprintf(stdout, FGWHT BGGRN "%5d ms", max / 1000);
-					fprintf(stdout, FGWHT BGGRN "%5d ms", min / 1000);
-					fprintf(stdout, FGWHT BGGRN "%5d ms", avg);
-					fprintf(stdout, FGWHT BGGRN "%5d %% ", reply_percent);
+					// Only print times if at least 1 reply has been received
+					if (destinations[i].time_count > 0) {
+						fprintf(stdout, FGWHT BGGRN "%5d ms", max / 1000);
+						fprintf(stdout, FGWHT BGGRN "%5d ms", min / 1000);
+						fprintf(stdout, FGWHT BGGRN "%5d ms", avg);
+					} else {
+						// Print placeholders
+						fprintf(stdout, FGWHT BGRED "    - ms");
+						fprintf(stdout, FGWHT BGRED "    - ms");
+						fprintf(stdout, FGWHT BGRED "    - ms");
+					}
+					fprintf(stdout, FGWHT "%s%5d %% ", reply_percent > 80 ? BGGRN : BGRED, reply_percent);
 				}
 				fprintf(stdout, RESETALL "\n");
 			}
